@@ -82,6 +82,7 @@ class BaseApiClient(metaclass=abc.ABCMeta):
         timeout: float | tuple[float, float] | None = (2.0, 60.0),
         retry_strategy: Retry | None = None,
         requests_per_sec: float = 10,
+        session: requests.Session | None = None,
     ) -> None:
         """
         Create a new instance of the API client.
@@ -95,7 +96,10 @@ class BaseApiClient(metaclass=abc.ABCMeta):
         self._base_url = no_trailing_slash(base_url)
         self.user_agent = user_agent
         self.timeout: float | tuple[float, float] | None = timeout
-        self._session: requests.Session | None = None
+        if session:
+            self._session = session
+        else:
+            self._session: requests.Session | None = None
         self._throttler = Throttler(rate_per_second=requests_per_sec)
         self._retry_strategy = retry_strategy or self.create_default_retry_strategy()
         self.xml_parser = xml_parser or XmlParser()
@@ -201,7 +205,12 @@ class BaseApiClient(metaclass=abc.ABCMeta):
         url = self._get_url_for_request(endpoint)
 
         request_kwargs = dict(
-            params=params, data=data, json=json, files=files, headers=headers, timeout=timeout or self.timeout
+            params=params,
+            data=data,
+            json=json,
+            files=files,
+            headers=headers,
+            timeout=timeout or self.timeout,
         )
         request_kwargs.update(kwargs)
 

@@ -17,6 +17,7 @@ import abc
 import datetime
 import logging
 import re
+import threading
 from typing import IO, Literal, Self, Sequence, TextIO, TypeVar, overload
 
 from openepd.model.declaration import BaseDeclaration
@@ -44,19 +45,34 @@ class BaseIlcdMediumSpecificReader(metaclass=abc.ABCMeta):
 
     @overload
     def get_entity_stream(
-        self, entity_type: str, entity_id: str, entity_version: str | None = None, *, binary: Literal[True]
+        self,
+        entity_type: str,
+        entity_id: str,
+        entity_version: str | None = None,
+        *,
+        binary: Literal[True],
     ) -> IO[bytes]:
         ...
 
     @overload
     def get_entity_stream(
-        self, entity_type: str, entity_id: str, entity_version: str | None = None, *, binary: Literal[False] = False
+        self,
+        entity_type: str,
+        entity_id: str,
+        entity_version: str | None = None,
+        *,
+        binary: Literal[False] = False,
     ) -> TextIO:
         ...
 
     @abc.abstractmethod
     def get_entity_stream(
-        self, entity_type: str, entity_id: str, entity_version: str | None = None, *, binary: bool = False
+        self,
+        entity_type: str,
+        entity_id: str,
+        entity_version: str | None = None,
+        *,
+        binary: bool = False,
     ) -> IO[bytes] | TextIO:
         """
         Get xml stream for the given entity.
@@ -139,18 +155,33 @@ class NoopBaseReader(BaseIlcdMediumSpecificReader):
 
     @overload
     def get_entity_stream(
-        self, entity_type: str, entity_id: str, entity_version: str | None = None, *, binary: Literal[True]
+        self,
+        entity_type: str,
+        entity_id: str,
+        entity_version: str | None = None,
+        *,
+        binary: Literal[True],
     ) -> IO[bytes]:
         ...
 
     @overload
     def get_entity_stream(
-        self, entity_type: str, entity_id: str, entity_version: str | None = None, *, binary: Literal[False] = False
+        self,
+        entity_type: str,
+        entity_id: str,
+        entity_version: str | None = None,
+        *,
+        binary: Literal[False] = False,
     ) -> TextIO:
         ...
 
     def get_entity_stream(
-        self, entity_type: str, entity_id: str, entity_version: str | None = None, *, binary: bool = False
+        self,
+        entity_type: str,
+        entity_id: str,
+        entity_version: str | None = None,
+        *,
+        binary: bool = False,
     ) -> IO[bytes] | TextIO:
         """Generate exception. This class does not support get_entity_stream."""
         raise ValueError("NoopBaseReader does not support get_entity_stream")
@@ -178,6 +209,7 @@ class IlcdXmlReader:
     _LANG_ATTRIB_NAME = "{http://www.w3.org/XML/1998/namespace}lang"
     _UUID_REGEX = re.compile(r"uuid=([0-9a-fA-F\-]{36})")
     ALLOW_URI_BASED_LOOKUP: bool = False
+    # _common_lock = threading.Lock()
 
     def __init__(self, data_provider: BaseIlcdMediumSpecificReader):
         self.data_provider = data_provider
@@ -213,7 +245,11 @@ class IlcdXmlReader:
                 self.xml_parser.xml_ns["epd2019"] = url
 
     def get_xml_for_entity(
-        self, provider: BaseIlcdMediumSpecificReader, entity_type: str, entity_id: str, entity_version: str | None
+        self,
+        provider: BaseIlcdMediumSpecificReader,
+        entity_type: str,
+        entity_id: str,
+        entity_version: str | None,
     ) -> T_ET.Element | None:
         """Attempt to fetch XML for given entity details and return it if successful."""
         if provider.entity_exists(entity_type, entity_id, entity_version):
@@ -241,14 +277,21 @@ class IlcdXmlReader:
                                       exist in the given one.
         :raise: ValueError if the entity does not exist.
         """
+        #
         try:
+            # with self._common_lock:
             with self.data_provider.get_entity_stream(entity_type, entity_id, entity_version) as stream:
                 return self.xml_parser.get_xml_tree(stream)
         except ValueError:
             if allow_static_datasets:
                 uuid_from_uri = self._UUID_REGEX.search(entity_uri) if entity_uri else None
                 uuid = uuid_from_uri.group(1) if uuid_from_uri else None
-                for dataset_name, dataset_provider in self.reference_data_providers.items():
+                if not uuid:
+                    uuid = "c7d370ee-2ab8-4b17-ba04-df29a8e607ea"
+                for (
+                    dataset_name,
+                    dataset_provider,
+                ) in self.reference_data_providers.items():
                     xml_tree = self.get_xml_for_entity(dataset_provider, entity_type, entity_id, entity_version)
                     if xml_tree is not None:
                         return xml_tree
@@ -256,7 +299,6 @@ class IlcdXmlReader:
                         xml_tree = self.get_xml_for_entity(dataset_provider, entity_type, uuid, entity_version)
                         if xml_tree:
                             return xml_tree
-
         raise ValueError(f"Entity {entity_id} version {entity_version} (type: {entity_type}) does not exist.")
 
     def _preprocess_path(self, path: XmlPath) -> str:
@@ -268,7 +310,10 @@ class IlcdXmlReader:
         return str_path
 
     def _get_el(
-        self, root: T_ET.Element, path: XmlPath, default_value: T_ET.Element | None = None
+        self,
+        root: T_ET.Element,
+        path: XmlPath,
+        default_value: T_ET.Element | None = None,
     ) -> T_ET.Element | None:
         """Get the element matching the given xpath or `default_value` if no element is found."""
         xpath = self._preprocess_path(path)
@@ -293,7 +338,10 @@ class IlcdXmlReader:
         return self.xml_parser.get_el_text(root, xpath, default_value)
 
     def _get_date(
-        self, root: T_ET.Element, path: XmlPath, default_value: datetime.date | None = None
+        self,
+        root: T_ET.Element,
+        path: XmlPath,
+        default_value: datetime.date | None = None,
     ) -> datetime.date | None:
         """
         Get the element value as date.
@@ -330,7 +378,11 @@ class IlcdXmlReader:
         return default_value
 
     def _get_localized_text(
-        self, root: T_ET.Element, path: XmlPath, lang: LangDef, default_value: LocalizedStr | None = None
+        self,
+        root: T_ET.Element,
+        path: XmlPath,
+        lang: LangDef,
+        default_value: LocalizedStr | None = None,
     ) -> LocalizedStr | None:
         """
         Get the element text for the given language.
@@ -355,7 +407,10 @@ class IlcdXmlReader:
         return default_value
 
     def _get_reference(
-        self, root: T_ET.Element, path: XmlPath, default_value: IlcdReference | None = None
+        self,
+        root: T_ET.Element,
+        path: XmlPath,
+        default_value: IlcdReference | None = None,
     ) -> IlcdReference | None:
         """
         Extract reference data from XML element specified by XPath.
@@ -433,7 +488,10 @@ class OpenEpdContactSupportReader(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def to_openepd_org(
-        self, lang: LangDef, base_url: str | None = None, provider_domain: str | None = None
+        self,
+        lang: LangDef,
+        base_url: str | None = None,
+        provider_domain: str | None = None,
     ) -> OpenEpdIlcdOrg:
         """Read as openEPD Org object."""
         pass
@@ -443,7 +501,12 @@ class OpenEpdPcrSupportReader(metaclass=abc.ABCMeta):
     """Base class for adding openEPD export support."""
 
     @abc.abstractmethod
-    def to_openepd_pcr(self, lang: LangDef, base_url: str | None = None, provider_domain: str | None = None) -> Pcr:
+    def to_openepd_pcr(
+        self,
+        lang: LangDef,
+        base_url: str | None = None,
+        provider_domain: str | None = None,
+    ) -> Pcr:
         """Read as openEPD Pcr object."""
         pass
 
@@ -466,21 +529,33 @@ class OpenEpdDeclarationSupportReader(metaclass=abc.ABCMeta):
         pass
 
     def to_openepd_epd(
-        self, lang: LangDef, base_url: str | None = None, provider_domain: str | None = None
+        self,
+        lang: LangDef,
+        base_url: str | None = None,
+        provider_domain: str | None = None,
     ) -> EpdWithDeps:
         """Read as openEPD EPD object."""
         return self.to_openepd_declaration(lang, base_url, provider_domain, expected_output_type=EpdWithDeps)
 
     def to_openepd_generic_estimate(
-        self, lang: LangDef, base_url: str | None = None, provider_domain: str | None = None
+        self,
+        lang: LangDef,
+        base_url: str | None = None,
+        provider_domain: str | None = None,
     ) -> GenericEstimateWithDeps:
         """Read as openEPD GenericEstimate object."""
         return self.to_openepd_declaration(
-            lang, base_url, provider_domain, expected_output_type=GenericEstimateWithDeps
+            lang,
+            base_url,
+            provider_domain,
+            expected_output_type=GenericEstimateWithDeps,
         )
 
     def to_openepd_industry_epd(
-        self, lang: LangDef, base_url: str | None = None, provider_domain: str | None = None
+        self,
+        lang: LangDef,
+        base_url: str | None = None,
+        provider_domain: str | None = None,
     ) -> IndustryEpdWithDeps:
         """Read as openEPD IndustryEpd object."""
         return self.to_openepd_declaration(lang, base_url, provider_domain, expected_output_type=IndustryEpdWithDeps)

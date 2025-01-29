@@ -20,7 +20,13 @@ from urllib.parse import urlencode
 
 from requests import HTTPError, RequestException, Response
 
-from ilcdlib.dto import Category, IlcdReference, ListResponseMeta, ProcessBasicInfo, ProcessSearchResponse
+from ilcdlib.dto import (
+    Category,
+    IlcdReference,
+    ListResponseMeta,
+    ProcessBasicInfo,
+    ProcessSearchResponse,
+)
 from ilcdlib.entity.category import CategorySystemReader
 from ilcdlib.http_common import BaseApiClient
 from ilcdlib.utils import none_throws
@@ -41,7 +47,11 @@ class Soda4LcaXmlApiClient(BaseApiClient):
     }
 
     def __init__(
-        self, base_url: str, *, category_reader_cls: Type[CategorySystemReader] = CategorySystemReader, **kwargs
+        self,
+        base_url: str,
+        *,
+        category_reader_cls: Type[CategorySystemReader] = CategorySystemReader,
+        **kwargs,
     ) -> None:
         """
         Create a new API client.
@@ -62,7 +72,9 @@ class Soda4LcaXmlApiClient(BaseApiClient):
         :param str category_system: category system
         """
         xml_doc = self._do_xml_request(
-            "get", f"/categorySystems/{self._urlencode(category_system)}", params=dict(format="xml", lang=lang)
+            "get",
+            f"/categorySystems/{self._urlencode(category_system)}",
+            params=dict(format="xml", lang=lang),
         )
         reader = self.category_reader_cls(xml_doc)
         return reader.get_categories_flat_list(data_type)
@@ -177,7 +189,11 @@ class Soda4LcaXmlApiClient(BaseApiClient):
         return int(xml_response.attrib.get(f"{{{self.ns['sapi']}}}totalSize", 0))
 
     def search_processes(
-        self, offset: int = 0, page_size: int = 100, lang: str | None = None, **other_params
+        self,
+        offset: int = 0,
+        page_size: int = 100,
+        lang: str | None = None,
+        **other_params,
     ) -> ProcessSearchResponse:
         """
         Filter processes by various criteria.
@@ -250,7 +266,10 @@ class Soda4LcaXmlApiClient(BaseApiClient):
         :return:
         """
         response = self.search_processes(0, page_size=1, **search_params)
-        return self._create_process_iterator(offset, page_size, **search_params), response.meta.total_items_count
+        return (
+            self._create_process_iterator(offset, page_size, **search_params),
+            response.meta.total_items_count,
+        )
 
     def _create_process_iterator(
         self, offset: int = 0, page_size: int = 100, **search_params

@@ -50,18 +50,33 @@ class ZipIlcdReader(BaseIlcdMediumSpecificReader):
 
     @overload
     def get_entity_stream(
-        self, entity_type: str, entity_id: str, entity_version: str | None = None, *, binary: Literal[True]
+        self,
+        entity_type: str,
+        entity_id: str,
+        entity_version: str | None = None,
+        *,
+        binary: Literal[True],
     ) -> IO[bytes]:
         ...
 
     @overload
     def get_entity_stream(
-        self, entity_type: str, entity_id: str, entity_version: str | None = None, *, binary: Literal[False] = False
+        self,
+        entity_type: str,
+        entity_id: str,
+        entity_version: str | None = None,
+        *,
+        binary: Literal[False] = False,
     ) -> TextIO:
         ...
 
     def get_entity_stream(
-        self, entity_type: str, entity_id: str, entity_version: str | None = None, *, binary: bool = False
+        self,
+        entity_type: str,
+        entity_id: str,
+        entity_version: str | None = None,
+        *,
+        binary: bool = False,
     ) -> IO[bytes] | TextIO:
         """
         Get xml stream for the given entity.

@@ -17,8 +17,11 @@ from dataclasses import dataclass
 import io
 from typing import IO
 from urllib.parse import parse_qs
+import zipfile
 
-import urllib3
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3 import Retry
 from urllib3.util import parse_url
 
 from ilcdlib.dto import IlcdReference
@@ -26,7 +29,12 @@ from ilcdlib.medium.archive import ZipIlcdReader
 from ilcdlib.soda4lca.api_client import Soda4LcaXmlApiClient
 from ilcdlib.utils import none_throws
 
-http = urllib3.PoolManager()
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+API_TOKEN = os.getenv("ECO_PLATFORM_TOKEN")
 
 
 @dataclass(kw_only=True)
@@ -41,11 +49,20 @@ class IlcdRemotePointer:
 class Soda4LcaZipReader(ZipIlcdReader):
     """A reader for ILCD zip archives exported from the SODA4LCA interface."""
 
-    def __init__(self, endpoint: str):
+    def __init__(self, endpoint: str, session: requests.Session | None = None):
+        if session:
+            self._session = session
+        else:
+            self._session = requests.Session()
+            retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
+            http_adapter = HTTPAdapter(max_retries=retries)
+            self._session.mount("https://", http_adapter)
+            self._session.mount("http://", http_adapter)
+
         pointer = self.soda_endpoint_to_pointer(endpoint)
         if pointer.ref.entity_type != "processes":
             raise ValueError(f"Invalid endpoint {endpoint}. Must point to the process.")
-        self._soda4lca_client = Soda4LcaXmlApiClient(pointer.base_url)
+        self._soda4lca_client = Soda4LcaXmlApiClient(pointer.base_url, session=self._session)
         self._ref = pointer.ref
         zip_url = self.create_zip_export_endpoint(pointer)
         zip_file = self.dowload_zip_archive(zip_url)
@@ -110,10 +127,20 @@ class Soda4LcaZipReader(ZipIlcdReader):
     def dowload_zip_archive(self, url: str) -> IO[bytes]:
         """Download a zip archive from a URL."""
         # TODO: Move this to dedicated class
-        response = http.request("GET", url)
-        if response.status == 200:
-            return io.BytesIO(response.data)
-        raise ValueError(f"Could not download zip archive from {url}. Status code: {response.status}")
+        try:
+            response = self._session.get(url)
+            response.raise_for_status()
+            content = response.content
+
+            # Verify magic number
+            if not content.startswith(b"PK\x03\x04"):
+                raise zipfile.BadZipFile(f"Invalid magic number for ZIP file from URL: {url}")
+
+            return io.BytesIO(content)
+        except requests.HTTPError as e:
+            raise ValueError(f"Could not download zip archive from {url}. Status code: {e.response.status_code}") from e
+        except zipfile.BadZipFile as e:
+            raise ValueError(f"Downloaded file from {url} is not a valid ZIP archive.") from e
 
     def get_pdf_url(self) -> str | None:
         """Get the URL to the PDF document if any."""
@@ -124,10 +151,15 @@ class Soda4LcaZipReader(ZipIlcdReader):
         url = self.get_pdf_url()
         if url is None:
             return None
-        response = http.request("GET", url)
-        if response.status == 200:
-            return io.BytesIO(response.data)
-        raise ValueError(f"Could not download PDF from {url}. Status code: {response.status}")
+        try:
+            response = self._session.get(url)
+            response.raise_for_status()
+        except requests.HTTPError as e:
+            raise ValueError(
+                f"Could not download PDF from {url}. Status code: {e.response.status_code}",
+                e,
+            )
+        return io.BytesIO(response.content)
 
     def resolve_entity_url(self, ref: IlcdReference, digital_file: str | None) -> str | None:
         """

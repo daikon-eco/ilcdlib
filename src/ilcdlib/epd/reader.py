@@ -16,6 +16,7 @@
 import datetime
 import itertools
 import logging
+import threading
 from typing import IO, Mapping, MutableMapping, Type, cast
 
 from openepd.model.common import Amount, Measurement
@@ -55,8 +56,15 @@ from ilcdlib.entity.pcr import IlcdPcrReader
 from ilcdlib.entity.validation import IlcdValidationListReader
 from ilcdlib.epd.declaration_convertor import EpdToGenericEstimateConvertor
 from ilcdlib.extension import IlcdEpdExtension
-from ilcdlib.mapping.category import CategoryMapper, CsvCategoryMapper, NoopCategoryMapper
-from ilcdlib.mapping.compliance import StandardNameToLCIAMethodMapper, default_standard_names_to_lcia_mapper
+from ilcdlib.mapping.category import (
+    CategoryMapper,
+    CsvCategoryMapper,
+    NoopCategoryMapper,
+)
+from ilcdlib.mapping.compliance import (
+    StandardNameToLCIAMethodMapper,
+    default_standard_names_to_lcia_mapper,
+)
 from ilcdlib.sanitizing.text import trim_text
 from ilcdlib.type import LangDef
 from ilcdlib.utils import (
@@ -74,6 +82,8 @@ _LOGGER = logging.getLogger(__name__)
 
 class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
     """Reader for ILCD+EPD datasets."""
+
+    # _lock = threading.Lock()
 
     def __init__(
         self,
@@ -109,8 +119,14 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
         else:
             self.__epd_entity_ref = IlcdReference(IlcdDatasetType.Processes, epd_process_id, epd_version)
         entity_type, entity_id, entity_version, entity_uri = self.__epd_entity_ref
+
+        # with self._lock:
         self.epd_el_tree = self.get_xml_tree(
-            entity_type, entity_id, entity_version, entity_uri=entity_uri, allow_static_datasets=False
+            entity_type,
+            entity_id,
+            entity_version,
+            entity_uri=entity_uri,
+            allow_static_datasets=False,
         )
         self.remap_xml_ns(self.epd_el_tree.nsmap)  # type: ignore
         self.post_init()
@@ -128,7 +144,12 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
         result: list[str] = []
         elements = self._get_all_els(
             self.epd_el_tree,
-            ("process:processInformation", "process:dataSetInformation", "process:name", "process:baseName"),
+            (
+                "process:processInformation",
+                "process:dataSetInformation",
+                "process:name",
+                "process:baseName",
+            ),
         )
         for x in elements:
             if x.attrib and x.attrib.get(self._LANG_ATTRIB_NAME):
@@ -144,13 +165,22 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
 
     def get_own_reference(self) -> IlcdReference | None:
         """Get the reference to this data set."""
-        return IlcdReference(entity_type="processes", entity_id=self.get_uuid(), entity_version=self.get_version())
+        return IlcdReference(
+            entity_type="processes",
+            entity_id=self.get_uuid(),
+            entity_version=self.get_version(),
+        )
 
     def get_uuid(self) -> str:
         """Get the UUID of the entity described by this data set."""
         return none_throws(
             self._get_text(
-                self.epd_el_tree, ("process:processInformation", "process:dataSetInformation", "common:UUID")
+                self.epd_el_tree,
+                (
+                    "process:processInformation",
+                    "process:dataSetInformation",
+                    "common:UUID",
+                ),
             )
         )
 
@@ -158,7 +188,11 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
         """Get the version of the entity described by this data set."""
         return self._get_text(
             self.epd_el_tree,
-            ("process:administrativeInformation", "process:publicationAndOwnership", "common:dataSetVersion"),
+            (
+                "process:administrativeInformation",
+                "process:publicationAndOwnership",
+                "common:dataSetVersion",
+            ),
         )
 
     def is_epd(self) -> bool:
@@ -166,7 +200,11 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
         return (
             self._get_text(
                 self.epd_el_tree,
-                ("process:modellingAndValidation", "process:LCIMethodAndAllocation", "process:typeOfDataSet"),
+                (
+                    "process:modellingAndValidation",
+                    "process:LCIMethodAndAllocation",
+                    "process:typeOfDataSet",
+                ),
             )
             == "EPD"
         )
@@ -179,7 +217,12 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
         """Return the ILCD dataset type. e.g. 'average dataset', 'industry dataset', 'generic dataset', etc."""
         return self._get_text(
             self.epd_el_tree,
-            ("process:modellingAndValidation", "process:LCIMethodAndAllocation", "common:other", "epd2013:subType"),
+            (
+                "process:modellingAndValidation",
+                "process:LCIMethodAndAllocation",
+                "common:other",
+                "epd2013:subType",
+            ),
         )
 
     def is_product_epd(self) -> bool:
@@ -210,7 +253,12 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
         """Return the product name in the given language."""
         return self._get_localized_text(
             self.epd_el_tree,
-            ("process:processInformation", "process:dataSetInformation", "process:name", "process:baseName"),
+            (
+                "process:processInformation",
+                "process:dataSetInformation",
+                "process:name",
+                "process:baseName",
+            ),
             lang,
         )
 
@@ -231,7 +279,11 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
         """Return the general comment in the given language."""
         return self._get_localized_text(
             self.epd_el_tree,
-            ("process:processInformation", "process:dataSetInformation", "common:generalComment"),
+            (
+                "process:processInformation",
+                "process:dataSetInformation",
+                "common:generalComment",
+            ),
             lang,
         )
 
@@ -243,7 +295,12 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
         """Return the date the EPD was published."""
         pub_date = self._get_date(
             self.epd_el_tree,
-            ("process:processInformation", "process:time", "common:other", "epd2019:publicationDateOfEPD"),
+            (
+                "process:processInformation",
+                "process:time",
+                "common:other",
+                "epd2019:publicationDateOfEPD",
+            ),
         )
         if pub_date is None:
             ref_year = self._get_int(
@@ -263,7 +320,12 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
 
         pub_date = self._get_date(
             self.epd_el_tree,
-            ("process:processInformation", "process:time", "common:other", "epd2019:publicationDateOfEPD"),
+            (
+                "process:processInformation",
+                "process:time",
+                "common:other",
+                "epd2019:publicationDateOfEPD",
+            ),
         )
         valid_until_year = self._get_int(
             self.epd_el_tree,
@@ -288,7 +350,11 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
         """
         return self._get_localized_text(
             self.epd_el_tree,
-            ("process:processInformation", "process:technology", "process:technologyDescriptionAndIncludedProcesses"),
+            (
+                "process:processInformation",
+                "process:technology",
+                "process:technologyDescriptionAndIncludedProcesses",
+            ),
             lang,
         )
 
@@ -300,7 +366,11 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
         """
         return self._get_localized_text(
             self.epd_el_tree,
-            ("process:processInformation", "process:technology", "process:technologicalApplicability"),
+            (
+                "process:processInformation",
+                "process:technology",
+                "process:technologicalApplicability",
+            ),
             lang,
         )
 
@@ -325,8 +395,14 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
         """Return the product lca discussion in the given language. See openEPD/lca_discussion field docs."""
         mb = MarkdownSectionBuilder()
         mb.add_section("Use Advice", self.get_dataset_use_advice(lang))
-        mb.add_section("Technology Description And Included Processes", self.get_technology_description(lang))
-        mb.add_section("Location description of restrictions", self.get_location_description_of_restrictions(lang))
+        mb.add_section(
+            "Technology Description And Included Processes",
+            self.get_technology_description(lang),
+        )
+        mb.add_section(
+            "Location description of restrictions",
+            self.get_location_description_of_restrictions(lang),
+        )
         return mb.build()
 
     def get_location_description_of_restrictions(self, lang: LangDef) -> str | None:
@@ -346,7 +422,11 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
         """Return production regions in the given language."""
         el = self._get_el(
             self.epd_el_tree,
-            ("process:processInformation", "process:geography", "process:locationOfOperationSupplyOrProduction"),
+            (
+                "process:processInformation",
+                "process:geography",
+                "process:locationOfOperationSupplyOrProduction",
+            ),
         )
 
         if el is None:
@@ -453,7 +533,10 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
         return result
 
     def get_ilcd_validations(
-        self, lang: LangDef, base_url: str | None = None, provider_domain: str | None = None
+        self,
+        lang: LangDef,
+        base_url: str | None = None,
+        provider_domain: str | None = None,
     ) -> list[ValidationDto]:
         """Return list of all verifiers."""
         reader = self.get_validation_reader()
@@ -529,7 +612,11 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
         """
         return self._get_int(
             self.epd_el_tree,
-            ("process:processInformation", "process:quantitativeReference", "process:referenceToReferenceFlow"),
+            (
+                "process:processInformation",
+                "process:quantitativeReference",
+                "process:referenceToReferenceFlow",
+            ),
         )
 
     def get_material_properties(self) -> MatMlMaterial | None:
@@ -632,7 +719,11 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
         """Get document identifier assigned by program operator."""
         return self._get_text(
             self.epd_el_tree,
-            ("process:administrativeInformation", "process:publicationAndOwnership", "common:registrationNumber"),
+            (
+                "process:administrativeInformation",
+                "process:publicationAndOwnership",
+                "common:registrationNumber",
+            ),
         )
 
     def get_pcr(self, lang: LangDef, base_url: str | None = None) -> Pcr | None:
@@ -794,7 +885,7 @@ class IlcdEpdReader(OpenEpdDeclarationSupportReader, IlcdXmlReader):
             program_operator_doc_id=self.get_program_operator_id(),
             manufacturer=manufacturer,
             epd_developer=epd_developer,
-            epd_developer_email=epd_developer_contact.email if epd_developer_contact else None,
+            epd_developer_email=(epd_developer_contact.email if epd_developer_contact else None),
             program_operator=program_operator,
             product_classes=product_classes,  # type: ignore[arg-type]
             manufacturing_description=self.get_technology_description(lang),
